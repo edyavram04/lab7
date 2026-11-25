@@ -62,29 +62,115 @@ class MainActivity : AppCompatActivity() {
 
     // TODO 1: Implement the method that initializes the views
     private fun initViews() {
+        val chatListView: ListView = findViewById(R.id.chatListView)
+        messageEditText = findViewById(R.id.messageEditText)
+        sendButton = findViewById(R.id.sendButton)
+        listDevicesButton = findViewById(R.id.listDevicesButton)
+
+        listDevicesButton.setOnClickListener { listPairedDevices() }
+
+        chatMessages = ArrayList()
+        chatArrayAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, chatMessages)
+        chatListView.adapter = chatArrayAdapter
+
     }
 
     // TODO 2: Implement the method that initializes Bluetooth
     private fun initBluetooth() {
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+
+        if (bluetoothAdapter == null) {
+            Toast.makeText(this, "Bluetooth is not available.", Toast.LENGTH_LONG).show()
+            finish()
+        }
 
     }
 
     // TODO 3: Implement the method that checks permissions
     private fun checkPermissions() {
+        val permissions = mutableListOf<String>()
+
+        // Pentru Android 12 sau mai nou, folosim permisiuni specifice Bluetooth
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            // Pentru versiuni mai vechi, accesul la locație este necesar
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+        // Cerem permisiunile utilizatorului
+        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), REQUEST_PERMISSIONS)
 
     }
 
     // TODO 5: Implement the method that displays a dialog for selecting a paired device
     private fun listPairedDevices() {
+        // TODO 5: Implement the method that displays a dialog for selecting a paired device
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
+        // Obținem dispozitivele împerecheate
+        val pairedDevices: Set<BluetoothDevice> = bluetoothAdapter.bondedDevices
+        val deviceList = mutableListOf<String>()
+        val devices = mutableListOf<BluetoothDevice>()
+
+        // Le adaugam in lista
+        if (pairedDevices.isNotEmpty()) {
+            for (device in pairedDevices) {
+                deviceList.add(device.name + "\n" + device.address)
+                devices.add(device)
+            }
+        }
+
+        // Afișăm dispozitivele într-un dialog
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Select Device")
+
+        val deviceArrayAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, deviceList)
+
+        // Tratam situatia in care un dispozitiv este apasat in cadrul dialogului
+        builder.setAdapter(deviceArrayAdapter) { dialog, which ->
+            selectedDevice = devices[which]
+
+            // deschidem un thread de comunicare
+            connectThread = ConnectThread(this, bluetoothAdapter, selectedDevice, MY_UUID)
+            connectThread?.start()
+        }
+
+        builder.show()
 
     }
 
     // TODO 6: Implement server socket to listen for incoming connections
     private fun startServer() {
+        // TODO 6: Implement server socket to listen for incoming connections
+        // Inițializăm AcceptThread, care va gestiona conexiunile primite
+        acceptThread = AcceptThread(this, bluetoothAdapter, MY_UUID)
+        acceptThread?.start()
     }
 
     // TODO 7: Implement the method that sends a message to the connected device
     private fun sendMessage() {
+        // TODO 7: Implement the method that sends a message to the connected device
+        sendButton.setOnClickListener { v ->
+            // Preluăm mesajul introdus de utilizator
+            val message = messageEditText.text.toString()
+
+            // Verificăm dacă mesajul nu este gol și conexiunea este activă
+            if (message.isNotEmpty() && connectedThread != null) {
+
+                // Trimitem mesajul ca un array de bytes
+                connectedThread?.write(message.toByteArray())
+
+                // Golește câmpul de text
+                messageEditText.setText("")
+
+                // Adaugă mesajul trimis în interfață
+                addChatMessage("Me: $message")
+            }
+        }
 
     }
 
@@ -97,6 +183,32 @@ class MainActivity : AppCompatActivity() {
     // TODO 4: Handle permission results and activate Bluetooth programmatically
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // TODO 4: handle permission results
+        if (requestCode == REQUEST_PERMISSIONS) {
+            var permissionGranted = true
+
+            // Verificăm dacă toate permisiunile au fost acordate
+            for (result in grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    permissionGranted = false
+                    break
+                }
+            }
+
+            if (!permissionGranted) {
+                Toast.makeText(this, "Permissions required for Bluetooth operation.", Toast.LENGTH_LONG).show()
+                finish()
+            }
+
+            // Activăm Bluetooth dacă nu este deja activat
+            if (!bluetoothAdapter.isEnabled) {
+                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    return
+                }
+                startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
+            }
+        }
 
     }
 
@@ -107,12 +219,25 @@ class MainActivity : AppCompatActivity() {
 
     // TODO 4: Handle Bluetooth enable result
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_ENABLE_BT && resultCode != RESULT_OK) {
+            Toast.makeText(this, "Bluetooth must be enabled to continue.", Toast.LENGTH_LONG).show()
+            finish()
+        }
         super.onActivityResult(requestCode, resultCode, data)
     }
 
     // TODO 8: Clean up threads on activity destroy
     override fun onDestroy() {
         super.onDestroy()
+        // TODO 8: cleanup threads
+        // Închidem AcceptThread dacă rulează
+        acceptThread?.cancel()
+
+        // Închidem ConnectThread dacă rulează
+        connectThread?.cancel()
+
+        // Închidem ConnectedThread dacă rulează
+        connectedThread?.cancel()
 
     }
 }
